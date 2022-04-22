@@ -12,16 +12,31 @@ end
 
 ReadIndicator() = ReadIndicator(0, pad7(), nothing)
 
+const OFFSET_STATE =
+    fieldoffset(ReadIndicator, findfirst(==(:state), fieldnames(ReadIndicator)))
+
 function arrive!(ind::ReadIndicator)
+    #=
     @atomic ind.state += UInt(1)  # [^seq_cst_state_leftright]
+    =#
+    ptr = Ptr{UInt}(pointer_from_objref(ind) + OFFSET_STATE)
+    GC.@preserve ind begin
+        UnsafeAtomics.modify!(ptr, +, UInt(1), seq_cst)
+    end
     return ind
 end
 
 function depart!(ind::ReadIndicator)
+    #=
     state = @atomic(
         :acquire_release,  # [^acq_rel_ind_state] [^acq_rel_ind_waiter]
         ind.state -= UInt(1)
     )
+    =#
+    ptr = Ptr{UInt}(pointer_from_objref(ind) + OFFSET_STATE)
+    GC.@preserve ind begin
+        _old, state = UnsafeAtomics.modify!(ptr, -, UInt(1), acq_rel)
+    end
     if state == HAS_WAITER_MASK  # no readers, one waiter
         # Choosing at most one reader task that wakes up the waiter using CAS [^cas_waker].
         _, ok = @atomicreplace(
