@@ -8,6 +8,8 @@ function guarding end
 
 module Internal
 
+using UnsafeAtomics: UnsafeAtomics, acq_rel, seq_cst
+
 using ..LeftRight: LeftRight
 
 include("utils.jl")
