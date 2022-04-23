@@ -18,5 +18,6 @@ include("core.jl")
 end  # module Internal
 
 const Guard = Internal.Guard
+# const SimpleGuard = Internal.SimpleGuard
 
 end  # baremodule LeftRight
