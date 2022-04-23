@@ -1,10 +1,11 @@
 module TestCore
 
 using LeftRight
+using LeftRight.Internal: SimpleGuard
 using Test
 
-function test_simple()
-    g = LeftRight.Guard{Dict{Symbol,Int}}()
+function check_serial(Guard)
+    g = Guard{Dict{Symbol,Int}}()
     LeftRight.guarding(g) do dict
         dict[:a] = 111
     end
@@ -25,8 +26,11 @@ function test_simple()
     end == 333
 end
 
-function test_concurrency(; ntasks = Threads.nthreads(), ntries = 100_000)
-    g = LeftRight.Guard() do
+test_serial() = check_serial(LeftRight.Guard)
+test_serial_simple() = check_serial(SimpleGuard)
+
+function check_concurrency(Guard; ntasks = Threads.nthreads(), ntries = 10_000_000)
+    g = Guard() do
         Dict(:a => 0, :b => 2)
     end
 
@@ -58,5 +62,8 @@ function test_concurrency(; ntasks = Threads.nthreads(), ntries = 100_000)
 
     @test ok[]
 end
+
+test_concurrency(; options...) = check_concurrency(LeftRight.Guard; options...)
+test_concurrency_simple(; options...) = check_concurrency(SimpleGuard; options...)
 
 end  # module

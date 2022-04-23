@@ -1,3 +1,7 @@
+###
+### ReadIndicator (single counter)
+###
+
 # TODO: maybe use "NO_WAITERS_MASK" so that depart can use `iszero`
 const HAS_WAITER_MASK = ~(typemax(UInt) >> 1)
 
@@ -102,37 +106,65 @@ end
 # used for establishing the happens-before edge required for non-atomic store/load of
 # `ind.waiter` field.
 
+###
+### ShardedReadIndicator
+###
+
+struct ShardedReadIndicator
+    indicators::Vector{ReadIndicator}
+end
+
+ShardedReadIndicator() =
+    ShardedReadIndicator([ReadIndicator() for _ in 1:Threads.nthreads()])
+
+arrive!(ind::ShardedReadIndicator) = arrive!(ind.indicators[Threads.threadid()])
+
+function wait_empty(ind::ShardedReadIndicator; options...)
+    for sub in ind.indicators
+        wait_empty(sub; options...)
+    end
+end
+
+###
+### LeftRight.Guard
+###
+
 @enum LeftOrRight LEFT_READABLE RIGHT_READABLE
 
 flip(x::LeftOrRight) = x == LEFT_READABLE ? RIGHT_READABLE : LEFT_READABLE
 
 abstract type AbstractReadWriteGuard end  # TODO: Move it to ConcurrentUtils
 
-mutable struct Guard{Data} <: AbstractReadWriteGuard
+mutable struct GenericGuard{Data,Indicator} <: AbstractReadWriteGuard
     @const left::Data
     @const right::Data
     @atomic versionindex::Int
     @atomic leftright::LeftOrRight
-    @const indicators::NTuple{2,ReadIndicator}
+    @const indicators::NTuple{2,Indicator}
     @const lock::ReentrantLock
 
-    global function _Guard(left, right)
+    global function _Guard(left, right, Indicator)
         right = right::typeof(left)
-        indicators = (ReadIndicator(), ReadIndicator())
+        indicators = (Indicator(), Indicator())
         lock = ReentrantLock()
-        return new{typeof(left)}(left, right, 1, LEFT_READABLE, indicators, lock)
+        D = typeof(left)
+        I = typeof(indicators[1])
+        return new{D,I}(left, right, 1, LEFT_READABLE, indicators, lock)
     end
 end
 
-function Guard{Data}(f = Data) where {Data}
+const Guard{Data} = GenericGuard{Data,ShardedReadIndicator}
+const SimpleGuard{Data} = GenericGuard{Data,ReadIndicator}
+
+function GenericGuard{Data,Indicator}(f = Data) where {Data,Indicator}
     left = f()::Data
     right = f()::Data
-    return _Guard(left, right)::Guard{Data}
+    return _Guard(left, right, Indicator)::GenericGuard{Data}
 end
 
-Guard(f) = _Guard(f(), f())
+GenericGuard{<:Any,Indicator}(f) where {Indicator} = _Guard(f(), f(), Indicator)
 
-function acquire_read(g::Guard)
+function acquire_read(g::GenericGuard)
     versionindex = @atomic :monotonic g.versionindex  # [^monotonic_versionindex]
     token = arrive!(g.indicators[versionindex])
 
@@ -143,12 +175,12 @@ end
 # [^monotonic_versionindex]: Since `g.versionindex` is just a "performance hint," it can be
 # loaded using `:monotonic`.
 
-function release_read(::Guard, token)
+function release_read(::GenericGuard, token)
     depart!(token)
     return
 end
 
-function LeftRight.guarding_read(f, g::Guard)
+function LeftRight.guarding_read(f, g::GenericGuard)
     token, data = acquire_read(g)
     try
         return f(data)
@@ -157,7 +189,7 @@ function LeftRight.guarding_read(f, g::Guard)
     end
 end
 
-function LeftRight.guarding(f!, g::Guard)
+function LeftRight.guarding(f!, g::GenericGuard)
     lock(g.lock)
     try
         # No need to use `:acquire` since the lock already has ordered the access:
@@ -179,7 +211,7 @@ end
 # [^seq_cst_state_leftright]: Some accesses to `ind.state` and `g.leftright` must have
 # sequential consistent ordering.  See discussion below for more details.
 
-function toggle_and_wait(g::Guard)
+function toggle_and_wait(g::GenericGuard)
     prev = @atomic :monotonic g.versionindex  # [^monotonic_versionindex]
     next = mod1(prev + 1, 2)
     wait_empty(g.indicators[next])  # [^w1]
