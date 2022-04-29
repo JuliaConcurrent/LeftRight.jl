@@ -10,8 +10,3 @@ end
 const var"@const" = var"@_const"
 
 pad7() = ntuple(_ -> 0, Val(7))
-
-function spinloop()
-    GC.safepoint()
-    ccall(:jl_cpu_pause, Cvoid, ())
-end

@@ -180,7 +180,7 @@ function release_read(::GenericGuard, token)
     return
 end
 
-function LeftRight.guarding_read(f, g::GenericGuard)
+function ConcurrentUtils.guarding_read(f, g::GenericGuard)
     token, data = acquire_read(g)
     try
         return f(data)
@@ -189,7 +189,7 @@ function LeftRight.guarding_read(f, g::GenericGuard)
     end
 end
 
-function LeftRight.guarding(f!, g::GenericGuard)
+function ConcurrentUtils.guarding(f!, g::GenericGuard)
     lock(g.lock)
     try
         # No need to use `:acquire` since the lock already has ordered the access:
